@@ -1,0 +1,46 @@
+name: Cut release branch
+
+# One-click button to start a soak. Creates release/<date> from main (or from a tag
+# for a hotfix) and opens the first release PR on it. Run from the Actions tab.
+on:
+  workflow_dispatch:
+    inputs:
+      name:
+        description: "Branch suffix (default: today's date, e.g. 2026-06-01)"
+        required: false
+        default: ""
+      from:
+        description: "Ref to cut from (default: main). For a hotfix, use a tag, e.g. v1.4.0"
+        required: false
+        default: "main"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  cut:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create release branch
+        id: branch
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const suffix = context.payload.inputs.name || new Date().toISOString().slice(0, 10);
+            const from = context.payload.inputs.from || 'main';
+            const branch = `release/${suffix}`;
+            const { owner, repo } = context.repo;
+            // Resolve the source ref (branch or tag) to a commit SHA.
+            const base = await github.rest.repos.getCommit({ owner, repo, ref: from });
+            await github.rest.git.createRef({ owner, repo, ref: `refs/heads/${branch}`, sha: base.data.sha });
+            core.setOutput('branch', branch);
+            core.info(`Cut ${branch} from ${from}@${base.data.sha.slice(0, 7)}`);
+
+      # Run release-please inline: a GITHUB_TOKEN ref-create won't trigger the
+      # release-please.yml push workflow, so we open the release PR here directly.
+      - name: Open the release PR on the new branch
+        uses: googleapis/release-please-action@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          target-branch: ${{ steps.branch.outputs.branch }}
