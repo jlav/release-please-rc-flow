@@ -24,6 +24,7 @@ with [release-please](https://github.com/googleapis/release-please).
 4. **Publish** — when soak passes, merge the release PR. That cuts the `vX.Y.Z` tag and a
    GitHub Release with notes grouped by type. Then **squash-merge the auto-opened "merge back
    into main" PR** — do this promptly; it's what advances `main` to the released version.
+   Merging it also deletes the release branch (the tag is the permanent snapshot).
 
 ## Conventions
 
@@ -39,9 +40,9 @@ the release, and is listed under its type (Features, Bug Fixes, …) in the rele
 
 ## Hotfixing an already-shipped version
 
-The release branch sticks around as that version's maintenance line — open a backport PR onto
-it for a `X.Y.Z+1` patch. If it was pruned, recreate the exact snapshot first: **Cut release
-branch** with `from: vX.Y.Z`.
+The release branch is gone after merge-back, but the tag is the exact snapshot. To patch a
+shipped version: **Cut release branch** with `from: vX.Y.Z` to recreate it, then open a backport
+PR onto the recreated branch for the `X.Y.Z+1` patch — nothing from `main` comes along.
 
 > A fix you backport appears in both the release it shipped in and the next release's notes —
 > it's two commits (the `main` original and the backport). That double-listing is expected.
