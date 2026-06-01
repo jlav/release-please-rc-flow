@@ -33,9 +33,37 @@ the release, and is listed under its type (Features, Bug Fixes, …) in the rele
 
 ## Hotfixing an already-shipped version
 
-The release branch is gone after merge-back, but the tag is the exact snapshot. To patch a
-shipped version: **Cut release branch** with `from: vX.Y.Z` to recreate it, then open a backport
-PR onto the recreated branch for the `X.Y.Z+1` patch — nothing from `main` comes along.
+Say `v1.4.0` is in prod and you find a bug. You want `v1.4.1` with **only** that fix — nothing
+that's landed on `main` since. The release branch was deleted at merge-back, but the `v1.4.0`
+**tag is the exact snapshot**, so you re-cut the branch from it:
+
+1. **Make sure the fix is on `main`.** If it isn't already there (the bug usually exists on
+   `main` too), land it as a normal `fix:` PR and squash-merge — same as any patch. Note the
+   squash commit SHA; you'll cherry-pick it in step 3.
+   ```sh
+   gh pr merge <fix-pr> --squash && git fetch origin
+   FIX=$(git rev-parse origin/main)        # the fix's squash commit
+   ```
+2. **Re-cut the release branch from the tag.** Actions ▸ **Cut release branch** ▸ *Run
+   workflow*, set **`from: v1.4.0`** (optionally a `name` like `1.4.x`, otherwise it's today's
+   date). This recreates `release/<suffix>` at the exact `v1.4.0` snapshot — no `main` history
+   rides along. Cut from a tag, it opens **no** release PR yet (nothing new is on the branch).
+3. **Backport the fix onto the recreated branch.** Cherry-pick the `main` fix onto a topic
+   branch and open a **backport PR** targeting it (a direct push is rejected by the ruleset):
+   ```sh
+   git switch -c jl/hotfix-1.4.1 origin/release/<suffix>
+   git cherry-pick "$FIX"
+   git push -u origin jl/hotfix-1.4.1
+   gh pr create --base release/<suffix> --title "fix: <same title as the main fix>"
+   ```
+   Squash-merge it. release-please then opens a **`release 1.4.1`** PR on the branch (fix only,
+   `version.txt` 1.4.0 → 1.4.1).
+4. **Publish.** Merge the `1.4.1` release PR → `v1.4.1` tag + notes listing just the fix.
+5. **Merge-back self-skips when `main` is ahead.** If `main` already shipped something newer
+   (e.g. `1.5.0`), the forward-only gate opens **no** merge-back PR — merging would regress
+   `main`, and the fix is already there from step 1. The `v1.4.1` tag stands on its own. If
+   `main` is still at `1.4.0`, the merge-back PR opens as usual; squash-merge it to advance
+   `main` to `1.4.1`.
 
 > A fix you backport appears in both the release it shipped in and the next release's notes —
 > it's two commits (the `main` original and the backport). That double-listing is expected.
