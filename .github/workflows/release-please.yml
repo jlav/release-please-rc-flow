@@ -1,0 +1,88 @@
+name: release-please
+
+# Runs only on release branches. release-please opens/updates a release PR there;
+# merging it cuts the stable tag + GitHub Release. After a release is created we
+# (1) label every shipped PR with `released: <version>`, and (2) open a merge-back
+# PR so `main`'s version pointer advances.
+on:
+  push:
+    branches:
+      - 'release/**'
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: release
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          target-branch: ${{ github.ref_name }}
+
+      - name: Label included PRs with the release version
+        if: ${{ steps.release.outputs.release_created == 'true' }}
+        uses: actions/github-script@v7
+        env:
+          TAG: ${{ steps.release.outputs.tag_name }}
+          VERSION: ${{ steps.release.outputs.version }}
+        with:
+          script: |
+            const tag = process.env.TAG, version = process.env.VERSION;
+            const { owner, repo } = context.repo;
+            const label = `released: ${version}`;
+            const tagUrl = `https://github.com/${owner}/${repo}/releases/tag/${tag}`;
+            const releases = await github.paginate(github.rest.repos.listReleases, { owner, repo, per_page: 100 });
+            const idx = releases.findIndex(r => r.tag_name === tag);
+            const prevTag = (idx >= 0 && releases[idx + 1]) ? releases[idx + 1].tag_name : null;
+            const commits = prevTag
+              ? (await github.rest.repos.compareCommitsWithBasehead({ owner, repo, basehead: `${prevTag}...${tag}` })).data.commits
+              : await github.paginate(github.rest.repos.listCommits, { owner, repo, sha: tag, per_page: 100 });
+            const prNumbers = new Set();
+            for (const c of commits) {
+              const assoc = await github.rest.repos.listPullRequestsAssociatedWithCommit({ owner, repo, commit_sha: c.sha });
+              for (const pr of assoc.data) { if (pr.merged_at) prNumbers.add(pr.number); }
+            }
+            try { await github.rest.issues.getLabel({ owner, repo, name: label }); }
+            catch (e) { if (e.status === 404) { await github.rest.issues.createLabel({ owner, repo, name: label, color: '1D76DB', description: `Shipped in ${tag}` }); } else { throw e; } }
+            let tagged = 0;
+            for (const number of prNumbers) {
+              const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number: number });
+              const skip = pr.head.ref.startsWith('release-please--') || pr.labels.some(l => l.name.startsWith('autorelease:') || l.name === 'release-meta');
+              if (skip) continue;
+              await github.rest.issues.addLabels({ owner, repo, issue_number: number, labels: [label] });
+              await github.rest.issues.createComment({ owner, repo, issue_number: number, body: `🚀 Released in [${tag}](${tagUrl}).` });
+              tagged++;
+            }
+            core.info(`Labeled ${tagged} PR(s) as shipped in ${tag}.`);
+
+      - name: Open merge-back PR to main (forward-only)
+        if: ${{ steps.release.outputs.release_created == 'true' }}
+        uses: actions/github-script@v7
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+          RELEASE_BRANCH: ${{ github.ref_name }}
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const version = process.env.VERSION, branch = process.env.RELEASE_BRANCH;
+            const sv = v => v.split('.').map(Number);
+            const gt = (a, b) => { const x = sv(a), y = sv(b); for (let i = 0; i < 3; i++) { if ((x[i]||0) !== (y[i]||0)) return (x[i]||0) > (y[i]||0); } return false; };
+            // Forward-only: never regress main (e.g. a late 1.4.1 hotfix after 1.5.0 shipped).
+            const cur = await github.rest.repos.getContent({ owner, repo, path: '.release-please-manifest.json', ref: 'main' });
+            const mainVersion = JSON.parse(Buffer.from(cur.data.content, 'base64').toString())['.'];
+            if (!gt(version, mainVersion)) { core.info(`main is at ${mainVersion}; no merge-back needed for ${version}.`); return; }
+            // Label exists so .github/release.yml can exclude this PR from release notes.
+            const meta = 'release-meta';
+            try { await github.rest.issues.getLabel({ owner, repo, name: meta }); }
+            catch (e) { if (e.status === 404) { await github.rest.issues.createLabel({ owner, repo, name: meta, color: 'BFD4F2', description: 'Excluded from release notes' }); } else { throw e; } }
+            const { data: pr } = await github.rest.pulls.create({
+              owner, repo, base: 'main', head: branch,
+              title: `chore: merge release v${version} into main`,
+              body: `Finishes the **v${version}** release: squash-merge to advance \`main\`'s version files. The fixes are already on \`main\`, so this lands as a single version-bump commit.`,
+            });
+            await github.rest.issues.addLabels({ owner, repo, issue_number: pr.number, labels: [meta] });
+            core.info(`Opened merge-back PR #${pr.number}.`);
