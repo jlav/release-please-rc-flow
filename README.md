@@ -11,16 +11,9 @@ with [release-please](https://github.com/googleapis/release-please).
    nothing merged to `main` afterwards affects it.
 2. **Soak** — deploy/validate the `release/<date>` branch. Meanwhile `main` stays open for
    everyone else.
-3. **Patch** — found a problem? Land the fix on `main` first (a normal `fix:` PR), then bring
-   it onto the release branch with a **backport PR**:
-   ```sh
-   git fetch origin
-   git switch --create backport/<short-name> origin/release/<date>
-   git cherry-pick <commit-sha-from-main>
-   git push --set-upstream origin backport/<short-name>
-   gh pr create --base release/<date> --title "fix: <same as the original>"
-   ```
-   Backports go through PRs (the release branches require it) so they show up in the notes.
+3. **Patch** — found a problem? Land the fix on `main` first (a normal `fix:` PR), then
+   cherry-pick it onto the release branch via a **backport PR**. Backports must be PRs (the
+   release branches enforce it), so the fix shows up in the release notes.
 4. **Publish** — when soak passes, merge the release PR. That cuts the `vX.Y.Z` tag and a
    GitHub Release with notes grouped by type. Then **squash-merge the auto-opened "merge back
    into main" PR** — do this promptly; it's what advances `main` to the released version.
